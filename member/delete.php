@@ -9,9 +9,12 @@ define('DB_NAME','board');
 date_default_timezone_set('Asia/Tokyo');
 
 // 変数の初期化
+$view_name = null;
 $current_date = null;
 $message = array();
+$message_data = null;
 $message_array = array();
+$success_message = null;
 $error_message = array();
 $pdo = null;
 $stmt = null;
@@ -19,6 +22,14 @@ $res = null;
 $option = null;
 //セッションの開始
 session_start();
+
+// 管理者としてログインしているか確認
+if( empty($_SESSION['admin_login']) || $_SESSION['admin_login'] !== true ) {
+
+	// ログインページへリダイレクト
+	header("Location: ./admin.php");
+	exit;
+}
 
 // データベースに接続
 try {
@@ -34,81 +45,61 @@ try {
     $error_message[] = $e->getMessage();
 }
 
-if( !empty($_POST['btn_submit']) ) {
+if(!empty($_GET['message_id']) && empty($_POST['message_id']) ){
+    //投稿を取得
 
-    // 空白除去
-	$view_name = preg_replace( '/\A[\p{C}\p{Z}]++|[\p{C}\p{Z}]++\z/u', '', $_POST['view_name']);
-	$message = preg_replace( '/\A[\p{C}\p{Z}]++|[\p{C}\p{Z}]++\z/u', '', $_POST['message']);
-	
-	// 表示名の入力チェック
-	if( empty($view_name) ) {
-		$error_message[] = '表示名を入力してください。';
-	}else{
-        //セッションに表示名を保存
-        $_SESSION['view_name'] = $view_name;
-    }
+    //db作成
+    $stmt = $pdo->prepare("SELECT * FROM message WHERE id = :id");
 
-	// メッセージの入力チェック
-	if( empty($message) ) {
-		$error_message[] = 'ひと言メッセージを入力してください。';
-	}else{
-        //文字数の確認
-        if(140 < mb_strlen($message, 'UTF-8')){
-            $error_message[] = 'ひとことメッセージは140字以内でお願いします';
-        }
-    }
+    //値をセット
+    $stmt->bindValue(':id',$_GET['message_id'],PDO::PARAM_INT);
 
-	if( empty($error_message) ) {
-		
-		// 書き込み日時を取得
-        $current_date = date("Y-m-d H:i:s");
+    //クエリの実行
+    $stmt->execute();
 
-        // トランザクション開始
-        $pdo->beginTransaction();
+    //表示データの取得
+    $message_data = $stmt->fetch();
 
-        try {
-
-            // SQL作成
-            $stmt = $pdo->prepare("INSERT INTO message (view_name, message, post_date) VALUES ( :view_name, :message, :current_date)");
-
-            // 値をセット
-            $stmt->bindParam( ':view_name', $view_name, PDO::PARAM_STR);
-            $stmt->bindParam( ':message', $message, PDO::PARAM_STR);
-            $stmt->bindParam( ':current_date', $current_date, PDO::PARAM_STR);
-
-            // SQLクエリの実行
-            $res = $stmt->execute();
-
-            // コミット
-            $res = $pdo->commit();
-
-        } catch(Exception $e) {
-
-            // エラーが発生した時はロールバック
-            $pdo->rollBack();
-        }
-
-        if( $res ) {
-            $_SESSION['$success_message'] = 'メッセージを書き込みました。';
-        } else {
-            $error_message[] = '書き込みに失敗しました。';
-        }
-
-        // プリペアドステートメントを削除
-        $stmt = null;
-
-        header('Location: ./');
-        exit;
+    //投稿データが取得できない時は管理ページに戻る
+    if( empty($message_data) ) {
+		header("Location: ./admin.php");
+		exit;
 	}
-}
-//PDOとの接続確認
-if(empty($error_message)){
-    //メッセージの取得
-    $sql = "SELECT view_name,message,post_date FROM message ORDER BY post_date DESC";
-    $message_array = $pdo->query($sql);
+}else if(!empty($_POST['message_id'])){
+
+	// トランザクション開始
+	$pdo->beginTransaction();
+
+	try {
+
+		// SQL作成
+		$stmt = $pdo->prepare("DELETE FROM message WHERE id = :id");
+
+		// 値をセット
+		$stmt->bindValue( ':id', $_POST['message_id'], PDO::PARAM_INT);
+
+		// SQLクエリの実行
+		$stmt->execute();
+
+		// コミット
+		$res = $pdo->commit();
+
+	} catch(Exception $e) {
+
+		// エラーが発生した時はロールバック
+		$pdo->rollBack();
+	}
+
+	// 削除に成功したら一覧に戻る
+	if( $res ) {
+		header("Location: ./admin.php");
+		exit;
+	}
+
 }
 
 // データベースの接続を閉じる
+$stmt = null;
 $pdo = null;
 
 ?>
@@ -116,7 +107,7 @@ $pdo = null;
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>moto LINK</title>
+<title>moto LINK 管理ページ 投稿の消去 </title>
 <style>
 
 /*------------------------------
@@ -326,6 +317,27 @@ hr {
     line-height: 1.6em;
 }
 
+.btn_cancel {
+	display: inline-block;
+	margin-right: 10px;
+	padding: 10px 20px;
+	color: #555;
+	font-size: 86%;
+	border-radius: 5px;
+	border: 1px solid #999;
+}
+.btn_cancel:hover {
+	color: #999;
+	border-color: #999;
+	text-decoration: none;
+}
+
+.text-confirm{
+    margin-bottom: 20px;
+    font-size: 86%;
+    line-height: 1.6em;
+}
+
 
 /*-----------------------------------
 掲示板エリア
@@ -392,14 +404,8 @@ article.reply::before {
 </style>
 </head>
 <body>
+<h1>moto LINK 管理ページ 投稿の消去 </h1>
 
-<h1>moto LINK</h1>
-<h2>みんなでお話をしてツーリングに出かけよう！</h2>
-<img src="athlete-2730736_640.png" >
-<?php if( empty($_POST['btn_submit']) && !empty($_SESSION['success_message']) ): ?>
-    <p class="success_message"><?php echo htmlspecialchars( $_SESSION['success_message'], ENT_QUOTES, 'UTF-8'); ?></p>
-    <?php unset($_SESSION['success_message']); ?>
-<?php endif; ?>
 <?php if( !empty($error_message) ): ?>
     <ul class="error_message">
 		<?php foreach( $error_message as $value ): ?>
@@ -407,34 +413,25 @@ article.reply::before {
 		<?php endforeach; ?>
     </ul>
 <?php endif; ?>
+<p class="text-confirm">以下の投稿を消去。<br>本当に消去しますか？</p>
 <form method="post">
 	<div>
 		<label for="view_name">ハンドルネーム</label>
-		<input id="view_name" type="text" name="view_name" value="<?php if( !empty($_SESSION['view_name']) ){ echo htmlspecialchars( $_SESSION['view_name'], ENT_QUOTES, 'UTF-8'); } ?>">
+		<input id="view_name" type="text" name="view_name" value="<?php if( !empty($message_data['view_name']) ){ echo $message_data['view_name']; }
+         elseif( !empty($view_name) ){ echo htmlspecialchars( $view_name, ENT_QUOTES, 'UTF-8'); }
+          ?>"disabled>
 	</div>
 	<div>
 		<label for="message">いまなにしてる？</label>
-		<textarea id="message" name="message">
-            <?php if(!empty($message)){
-                echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
-            } ?>
-        </textarea>
+		<textarea id="message" name="message" disabled><?php if( !empty($message_data['message']) ){ echo $message_data['message']; } 
+         elseif( !empty($message) ){  echo htmlspecialchars( $message_data, ENT_QUOTES, 'UTF-8');}
+         ?></textarea>
 	</div>
-	<input type="submit" name="btn_submit" value="投稿">
+    <a class="btn_cancel" href="admin.php">キャンセル</a>
+	<input type="submit" name="btn_submit" value="消去">
+    <input type="hidden" name="message_id" value="<?php if( !empty($message_data['id']) ){ echo $message_data['id']; } 
+        elseif( !empty($_POST['message_id']) ){ echo htmlspecialchars( $_POST['message_id'], ENT_QUOTES, 'UTF-8'); }
+    ?>">
 </form>
-<hr>
-<section>
-<?php if( !empty($message_array) ){ ?>
-<?php foreach( $message_array as $value ){ ?>
-<article>
-    <div class="info">
-        <h2><?php echo htmlspecialchars($value['view_name'],ENT_QUOTES,'UTF-8'); ?></h2>
-        <time><?php echo date('Y年m月d日 H:i', strtotime($value['post_date'])); ?></time>
-    </div>
-    <p><?php echo nl2br(htmlspecialchars($value['message'],ENT_QUOTES, 'UTF-8')); ?></p>
-</article>
-<?php } ?>
-<?php } ?>
-</section>
 </body>
 </html>
